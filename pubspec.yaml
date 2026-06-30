@@ -1,0 +1,36 @@
+name: app_resto
+description: "Application de gestion de commandes pour restaurant"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.0.5
+  intl: ^0.20.0
+  http: ^1.1.0
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+  flutter_dotenv: ^5.1.0
+  file_picker: ^8.0.0
+  shimmer: ^3.0.0
+  equatable: ^2.0.5
+  socket_io_client: ^2.0.3
+  printing: ^5.12.0
+  pdf: ^3.10.7
+  fl_chart: ^0.70.0
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+assets:
+  - .env
+  - logo.png
