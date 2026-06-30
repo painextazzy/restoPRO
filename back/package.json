@@ -14,7 +14,7 @@
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
     "jsonwebtoken": "^9.0.3",
-    
+    "pg": "^8.22.0",
     "postgres": "^3.4.9",
     "socket.io": "^4.8.3"
   },
