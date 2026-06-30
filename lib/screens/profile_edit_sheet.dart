@@ -1,12 +1,8 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/cloudinary_service.dart';
-
-// Import conditionnel pour le web
-import 'dart:html' as html if (dart.library.html) 'dart:html';
 
 class ProfileEditSheet extends StatefulWidget {
   final String userName;
@@ -15,7 +11,7 @@ class ProfileEditSheet extends StatefulWidget {
     String name,
     String email,
     String password,
-    String? imageUrl, // ✅ URL Cloudinary
+    String? imageUrl,
   ) onSave;
 
   const ProfileEditSheet({
@@ -37,8 +33,7 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
 
   Uint8List? _imageBytes;
   String? _imageFileName;
-  String? _imagePreviewUrl;
-  String? _uploadedImageUrl; // ✅ URL Cloudinary
+  String? _uploadedImageUrl;
   bool _isLoading = false;
   bool _isUploading = false;
 
@@ -60,14 +55,31 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
     super.dispose();
   }
 
-  // ------------------------------------------------------------
-  // SÉLECTION D'IMAGE
-  // ------------------------------------------------------------
   Future<void> _pickImage() async {
-    if (kIsWeb) {
-      await _pickImageWeb();
-    } else {
-      await _pickImageMobile();
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: true,
+      );
+      if (result != null) {
+        final platformFile = result.files.single;
+        final bytes = platformFile.bytes;
+        if (bytes != null) {
+          setState(() {
+            _imageBytes = bytes;
+            _imageFileName = platformFile.name;
+          });
+          await _uploadToCloudinary(bytes, platformFile.name);
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erreur : $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -83,7 +95,6 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
         _uploadedImageUrl = url;
         _isUploading = false;
       });
-      print('✅ Image uploadée vers Cloudinary: $url');
     } catch (e) {
       setState(() => _isUploading = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -95,71 +106,6 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
     }
   }
 
-  Future<void> _pickImageWeb() async {
-    try {
-      final input = html.FileUploadInputElement()..accept = 'image/*';
-      input.click();
-      await input.onChange.first;
-
-      final files = input.files;
-      if (files != null && files.isNotEmpty) {
-        final file = files.first;
-        final reader = html.FileReader();
-        reader.readAsArrayBuffer(file);
-        await reader.onLoad.first;
-
-        final bytes = reader.result as Uint8List?;
-        if (bytes != null) {
-          setState(() {
-            _imageBytes = bytes;
-            _imageFileName = file.name;
-            _imagePreviewUrl = html.Url.createObjectUrl(file);
-          });
-          await _uploadToCloudinary(bytes, file.name);
-        }
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erreur : $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  Future<void> _pickImageMobile() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        allowMultiple: false,
-        withData: true,
-      );
-      if (result != null) {
-        final platformFile = result.files.single;
-        final bytes = platformFile.bytes;
-        if (bytes != null) {
-          setState(() {
-            _imageBytes = bytes;
-            _imageFileName = platformFile.name;
-            _imagePreviewUrl = null;
-          });
-          await _uploadToCloudinary(bytes, platformFile.name);
-        }
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erreur : $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  // ------------------------------------------------------------
-  // SAUVEGARDE
-  // ------------------------------------------------------------
   void _save() async {
     if (_passwordController.text.isNotEmpty &&
         _passwordController.text != _confirmPasswordController.text) {
@@ -178,20 +124,17 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
       _nameController.text.trim(),
       _emailController.text.trim(),
       _passwordController.text.trim(),
-      _uploadedImageUrl, // ✅ URL Cloudinary
+      _uploadedImageUrl,
     );
 
     if (mounted) setState(() => _isLoading = false);
   }
 
-  // ------------------------------------------------------------
-  // BUILD
-  // ------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
-    final hasImage = _imagePreviewUrl != null || _imageBytes != null;
+    final hasImage = _imageBytes != null;
 
     return Container(
       height: screenHeight * 0.8,
@@ -238,7 +181,6 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Upload de photo
                   GestureDetector(
                     onTap: _pickImage,
                     child: Container(
@@ -254,11 +196,7 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
                         ),
                         image: hasImage
                             ? DecorationImage(
-                                image: _imagePreviewUrl != null
-                                    ? NetworkImage(_imagePreviewUrl!)
-                                    : (_imageBytes != null
-                                        ? MemoryImage(_imageBytes!)
-                                        : null as ImageProvider),
+                                image: MemoryImage(_imageBytes!),
                                 fit: BoxFit.cover,
                               )
                             : null,
@@ -345,7 +283,6 @@ class _ProfileEditSheetState extends State<ProfileEditSheet> {
                       ),
                     ),
                   const SizedBox(height: 20),
-
                   _buildTextField(
                     label: 'Nom',
                     controller: _nameController,

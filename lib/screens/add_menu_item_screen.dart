@@ -5,11 +5,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/menu_item.dart';
 import '../services/api_service.dart';
-import '../services/cloudinary_service.dart'; // ✅ Nouveau service
+import '../services/cloudinary_service.dart';
 import '../widgets/success_dialog.dart';
-
-// Pour le Web
-import 'dart:html' as html;
 
 class AddMenuItemScreen extends StatefulWidget {
   final MenuItem? menuItem;
@@ -29,11 +26,9 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
   String _selectedCategorie = 'PLAT';
   bool _isLoading = false;
 
-  // Image : soit bytes (nouvelle sélection), soit URL existante
   Uint8List? _imageBytes;
   String? _imageFileName;
-  String?
-      _imagePreviewUrl; // pour l'aperçu local (Web) ou URL Cloudinary existante
+  String? _imagePreviewUrl;
   bool _hasNewImage = false;
 
   @override
@@ -45,7 +40,6 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
       _prixController.text = widget.menuItem!.prix.toString();
       _quantiteController.text = widget.menuItem!.quantite.toString();
       _selectedCategorie = widget.menuItem!.categorie;
-      // Si l'article a une image (URL Cloudinary), on l'affiche
       if (widget.menuItem!.imageUrl != null &&
           widget.menuItem!.imageUrl!.isNotEmpty) {
         _imagePreviewUrl = widget.menuItem!.imageUrl;
@@ -63,48 +57,9 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
   }
 
   // ==========================================
-  // SÉLECTION D'IMAGE (Web + Mobile)
+  // SÉLECTION D'IMAGE (Mobile uniquement)
   // ==========================================
   Future<void> _pickImage() async {
-    // Détection de la plateforme
-    if (html.window != null) {
-      await _pickImageWeb();
-    } else {
-      await _pickImageMobile();
-    }
-  }
-
-  Future<void> _pickImageWeb() async {
-    try {
-      final input = html.FileUploadInputElement()..accept = 'image/*';
-      input.click();
-      await input.onChange.first;
-
-      final files = input.files;
-      if (files != null && files.isNotEmpty) {
-        final file = files.first;
-        final reader = html.FileReader();
-        reader.readAsArrayBuffer(file);
-        await reader.onLoad.first;
-
-        final bytes = reader.result as Uint8List?;
-        if (bytes != null) {
-          setState(() {
-            _imageBytes = bytes;
-            _imageFileName = file.name;
-            _imagePreviewUrl = html.Url.createObjectUrl(file);
-            _hasNewImage = true;
-          });
-        }
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur : $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  Future<void> _pickImageMobile() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.image,
@@ -130,51 +85,64 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
   }
 
   // ==========================================
-  // VALIDATEURS (inchangés)
+  // VALIDATEURS
   // ==========================================
-
   String? _validateNom(String? value) {
-    if (value == null || value.trim().isEmpty) return 'Le nom est requis';
+    if (value == null || value.trim().isEmpty) {
+      return 'Le nom est requis';
+    }
     final trimmed = value.trim();
     final regex = RegExp(r"^[a-zA-ZÀ-ÿ\s\-\.']+$");
-    if (!regex.hasMatch(trimmed))
+    if (!regex.hasMatch(trimmed)) {
       return 'Caractères spéciaux ou chiffres non autorisés';
+    }
     return null;
   }
 
   String? _validateDescription(String? value) {
-    if (value == null || value.trim().isEmpty)
+    if (value == null || value.trim().isEmpty) {
       return 'La description est requise';
+    }
     final trimmed = value.trim();
     final regex = RegExp(r"^[a-zA-ZÀ-ÿ\s\-\.\,\'\(\)]+$");
-    if (!regex.hasMatch(trimmed))
+    if (!regex.hasMatch(trimmed)) {
       return 'Caractères spéciaux ou chiffres non autorisés';
+    }
     return null;
   }
 
   String? _validatePrix(String? value) {
-    if (value == null || value.trim().isEmpty) return 'Le prix est requis';
+    if (value == null || value.trim().isEmpty) {
+      return 'Le prix est requis';
+    }
     final trimmed = value.trim();
-    if (!RegExp(r'^\d+$').hasMatch(trimmed))
+    if (!RegExp(r'^\d+$').hasMatch(trimmed)) {
       return 'Le prix doit être un nombre entier (ex: 10000)';
+    }
     final int prix = int.parse(trimmed);
-    if (prix < 1000 || prix > 99999)
+    if (prix < 1000 || prix > 99999) {
       return 'Le prix doit être entre 1000 et 99999 (4 à 5 chiffres)';
+    }
     return null;
   }
 
   String? _validateQuantite(String? value) {
-    if (value == null || value.trim().isEmpty) return 'Le stock est requis';
+    if (value == null || value.trim().isEmpty) {
+      return 'Le stock est requis';
+    }
     final trimmed = value.trim();
-    if (!RegExp(r'^\d+$').hasMatch(trimmed))
+    if (!RegExp(r'^\d+$').hasMatch(trimmed)) {
       return 'Le stock doit être un nombre entier';
+    }
     final int qte = int.parse(trimmed);
-    if (qte < 1) return 'Le stock doit être ≥ 1';
+    if (qte < 1) {
+      return 'Le stock doit être ≥ 1';
+    }
     return null;
   }
 
   // ==========================================
-  // ENREGISTREMENT AVEC CLOUDINARY
+  // ENREGISTREMENT
   // ==========================================
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
@@ -188,7 +156,7 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
       final quantite = int.parse(_quantiteController.text.trim());
       final categorie = _selectedCategorie;
 
-      // 1. Upload vers Cloudinary si une nouvelle image a été sélectionnée
+      // 1. Upload vers Cloudinary si nouvelle image
       String? imageUrl;
       if (_imageBytes != null && _hasNewImage) {
         imageUrl = await CloudinaryService.uploadImage(
@@ -197,7 +165,7 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
           folder: 'menu',
         );
       } else {
-        // Si pas de nouvelle image, on garde l'ancienne URL (si existante)
+        // Si pas de nouvelle image, on garde l'ancienne URL
         imageUrl = widget.menuItem?.imageUrl;
       }
 
@@ -209,11 +177,11 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
         'quantite': quantite,
         'categorie': categorie,
       };
-      if (imageUrl != null) {
+      if (imageUrl != null && imageUrl.isNotEmpty) {
         data['image_url'] = imageUrl;
       }
 
-      // 3. Appel à l'API (création ou mise à jour)
+      // 3. Appel API (création ou mise à jour)
       if (widget.menuItem == null) {
         await ApiService.createMenuItem(data);
       } else {
@@ -222,7 +190,7 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
 
       if (!mounted) return;
 
-      // ✅ Succès
+      // 4. Afficher le succès
       SuccessDialog.show(
         context,
         title: widget.menuItem == null ? 'Ajouté' : 'Modifié',
@@ -248,7 +216,7 @@ class _AddMenuItemScreenState extends State<AddMenuItemScreen> {
   }
 
   // ==========================================
-  // BUILD (inchangé, sauf la gestion de l'image)
+  // BUILD
   // ==========================================
   @override
   Widget build(BuildContext context) {

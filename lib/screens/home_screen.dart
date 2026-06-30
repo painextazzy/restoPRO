@@ -87,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: hasImage
           ? ClipOval(
               child: Image.network(
-                imageUrl!,
+                imageUrl,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) =>
                     const Icon(Icons.person, color: Colors.white, size: 24),

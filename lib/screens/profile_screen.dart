@@ -1,14 +1,10 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../models/user.dart';
 import 'profile_edit_sheet.dart';
 import 'login_screen.dart';
-import 'dart:html' as html if (dart.library.html) 'dart:html';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
