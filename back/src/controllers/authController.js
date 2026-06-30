@@ -1,7 +1,14 @@
-const pool = require('../config/database');
+// back/src/controllers/authController.js
+const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
+require('dotenv').config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'votre_secret_temporaire';
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+const JWT_SECRET = process.env.JWT_SECRET || 'mon_secret_jwt_2024';
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
@@ -11,37 +18,33 @@ exports.login = async (req, res) => {
   }
 
   try {
-    // Récupérer l'utilisateur
-    const userResult = await pool.query(
-      'SELECT id, nom, email, image_url, password FROM users WHERE email = $1',
-      [email]
-    );
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, nom, email, password')
+      .eq('email', email);
 
-    if (userResult.rows.length === 0) {
+    if (error) throw error;
+
+    if (!users || users.length === 0) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
-    const user = userResult.rows[0];
+    const user = users[0];
 
-    // Vérification en clair (pas sécurisé, mais pour le moment)
     if (password !== user.password) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
 
-    // Générer un token JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       JWT_SECRET,
-      { expiresIn: '1d' }
+      { expiresIn: '7d' }
     );
 
-    // Retourner l'utilisateur sans le mot de passe
     delete user.password;
-
-    res.status(200).json({ user, token });
-
-  } catch (error) {
-    console.error('❌ Erreur login:', error);
+    res.json({ user, token });
+  } catch (err) {
+    console.error('❌ login error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 };

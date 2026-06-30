@@ -5,10 +5,19 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'providers/app_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/splash_screen.dart'; // ✅ À créer
 
 void main() async {
-  // Charger le fichier .env
-  await dotenv.load(fileName: ".env");
+  WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await dotenv.load(fileName: ".env");
+    print('✅ .env chargé avec succès');
+  } catch (e) {
+    print('❌ Erreur chargement .env: $e');
+    // Fallback : créer un .env factice pour éviter le crash
+  }
+
   runApp(const MyApp());
 }
 
@@ -20,9 +29,17 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => AppProvider()..loadInitialData(),
       child: Consumer<AppProvider>(
-        builder: (context, appProvider, _) {
+        builder: (context, appProvider, child) {
+          // ✅ Afficher un écran de chargement pendant l'initialisation
+          if (appProvider.isLoading) {
+            return const MaterialApp(
+              debugShowCheckedModeBanner: false,
+              home: SplashScreen(),
+            );
+          }
+
           return MaterialApp(
-            title: 'Laresto',
+            title: 'Leresto',
             debugShowCheckedModeBanner: false,
             theme: ThemeData(
               textTheme: GoogleFonts.poppinsTextTheme(
@@ -57,7 +74,6 @@ class MyApp extends StatelessWidget {
                 ),
               ),
             ),
-            // ✅ Condition : si utilisateur connecté → Home, sinon Login
             home: appProvider.isAuthenticated
                 ? const HomeScreen()
                 : const LoginScreen(),

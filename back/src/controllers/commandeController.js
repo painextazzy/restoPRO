@@ -1,543 +1,460 @@
 // back/src/controllers/commandeController.js
-const pool = require('../config/database');
+const { createClient } = require('@supabase/supabase-js');
+require('dotenv').config();
 
-// ============================================
-// GET /api/commandes/table/:tableId/encours
-// ============================================
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
 exports.getCurrentOrderForTable = async (req, res) => {
   const { tableId } = req.params;
 
   try {
-    const orderResult = await pool.query(
-      `SELECT id, numero_facture, table_id, date_ouverture, date_cloture, statut, total
-       FROM commandes
-       WHERE table_id = $1 AND statut != 'payee'
-       ORDER BY date_ouverture DESC
-       LIMIT 1`,
-      [tableId]
-    );
+    const { data: commande, error: orderError } = await supabase
+      .from('commandes')
+      .select('*')
+      .eq('table_id', parseInt(tableId))
+      .neq('statut', 'payee')
+      .order('date_ouverture', { ascending: false })
+      .limit(1);
 
-    if (orderResult.rows.length === 0) {
+    if (orderError) throw orderError;
+
+    if (!commande || commande.length === 0) {
       return res.status(404).json({ message: 'Aucune commande en cours' });
     }
 
-    const commande = orderResult.rows[0];
+    const order = commande[0];
 
-    const itemsResult = await pool.query(
-      `SELECT lc.id, lc.commande_id, lc.plat_id AS menu_item_id, lc.quantite, lc.prix_unitaire, lc.total AS total_ligne
-       FROM lignes_commande lc
-       WHERE lc.commande_id = $1`,
-      [commande.id]
-    );
+    const { data: items, error: itemsError } = await supabase
+      .from('lignes_commande')
+      .select('id, commande_id, plat_id as menu_item_id, quantite, prix_unitaire, total as total_ligne')
+      .eq('commande_id', order.id);
 
-    commande.items = itemsResult.rows;
+    if (itemsError) throw itemsError;
 
-    res.status(200).json(commande);
-  } catch (error) {
-    console.error('❌ getCurrentOrderForTable:', error);
-    res.status(500).json({ error: error.message });
+    order.items = items || [];
+    res.json(order);
+  } catch (err) {
+    console.error('❌ getCurrentOrderForTable error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ============================================
-// POST /api/commandes (paiement)
-// ============================================
 exports.submitOrder = async (req, res) => {
   const { table_id, items } = req.body;
-  const client = await pool.connect();
+
+  if (!table_id || !items || items.length === 0) {
+    return res.status(400).json({ error: 'Données de commande invalides' });
+  }
 
   try {
-    await client.query('BEGIN');
-
-    let nouveauTotal = 0;
+    // Vérifier le stock
     for (const item of items) {
-      const stockResult = await client.query(
-        'SELECT quantite, nom FROM menu WHERE id = $1',
-        [item.menu_item_id]
-      );
+      const { data: menuItem, error } = await supabase
+        .from('menu')
+        .select('quantite, nom')
+        .eq('id', item.menu_item_id)
+        .single();
 
-      if (stockResult.rows.length === 0) {
-        throw new Error(`Article ID ${item.menu_item_id} introuvable`);
+      if (error || !menuItem) {
+        return res.status(400).json({ error: `Article ID ${item.menu_item_id} introuvable` });
       }
 
-      const stockActuel = stockResult.rows[0].quantite;
-      const nomArticle = stockResult.rows[0].nom;
-      if (stockActuel < item.quantite) {
-        throw new Error(
-          `Stock insuffisant pour l'article "${nomArticle}" (ID ${item.menu_item_id}). Disponible: ${stockActuel}, demandé: ${item.quantite}`
-        );
+      if (menuItem.quantite < item.quantite) {
+        return res.status(400).json({
+          error: 'STOCK_INSUFFISANT',
+          details: {
+            itemName: menuItem.nom,
+            disponible: menuItem.quantite,
+            demande: item.quantite,
+          },
+        });
       }
-
-      const ligneTotal = item.quantite * item.prix_unitaire;
-      nouveauTotal += ligneTotal;
     }
 
-    const existingOrder = await client.query(
-      `SELECT id, total FROM commandes
-       WHERE table_id = $1 AND statut != 'payee'
-       ORDER BY date_ouverture DESC
-       LIMIT 1`,
-      [table_id]
-    );
+    // Créer la commande
+    const numeroFacture = `FACT-${Date.now()}`;
+    const { data: newOrder, error: orderError } = await supabase
+      .from('commandes')
+      .insert({
+        table_id: parseInt(table_id),
+        numero_facture: numeroFacture,
+        date_ouverture: new Date().toISOString(),
+        statut: 'en_cours',
+      })
+      .select()
+      .single();
 
-    let commandeId;
-    let isNewOrder = false;
+    if (orderError) throw orderError;
+    const commandeId = newOrder.id;
 
-    if (existingOrder.rows.length > 0) {
-      commandeId = existingOrder.rows[0].id;
-      console.log(`📝 Ajout à la commande existante #${commandeId}`);
-    } else {
-      const numeroFacture = `FACT-${Date.now()}`;
-      const newOrder = await client.query(
-        `INSERT INTO commandes (table_id, numero_facture, date_ouverture, statut, total)
-         VALUES ($1, $2, CURRENT_TIMESTAMP, 'en_cours', 0)
-         RETURNING id`,
-        [table_id, numeroFacture]
-      );
-      commandeId = newOrder.rows[0].id;
-      isNewOrder = true;
-      console.log(`🆕 Nouvelle commande créée #${commandeId}`);
-    }
-
+    // Insérer les lignes et mettre à jour le stock
+    let total = 0;
     for (const item of items) {
       const ligneTotal = item.quantite * item.prix_unitaire;
-      await client.query(
-        `INSERT INTO lignes_commande (commande_id, plat_id, quantite, prix_unitaire, total)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [commandeId, item.menu_item_id, item.quantite, item.prix_unitaire, ligneTotal]
-      );
+      
+      const { error: ligneError } = await supabase
+        .from('lignes_commande')
+        .insert({
+          commande_id: commandeId,
+          plat_id: item.menu_item_id,
+          quantite: item.quantite,
+          prix_unitaire: item.prix_unitaire,
+          total: ligneTotal,
+        });
 
-      await client.query(
-        `UPDATE menu SET quantite = quantite - $1 WHERE id = $2`,
-        [item.quantite, item.menu_item_id]
-      );
+      if (ligneError) throw ligneError;
+
+      // Mettre à jour le stock
+      const { error: stockError } = await supabase
+        .from('menu')
+        .update({ quantite: supabase.raw('quantite - ?', [item.quantite]) })
+        .eq('id', item.menu_item_id);
+
+      if (stockError) throw stockError;
+      total += ligneTotal;
     }
 
-    const ancienTotal = existingOrder.rows.length > 0 ? existingOrder.rows[0].total : 0;
-    const totalFinal = ancienTotal + nouveauTotal;
+    // Mettre à jour le total et passer en payée
+    const { error: updateError } = await supabase
+      .from('commandes')
+      .update({
+        total: total,
+        statut: 'payee',
+        date_cloture: new Date().toISOString(),
+      })
+      .eq('id', commandeId);
 
-    await client.query(
-      `UPDATE commandes SET total = $1 WHERE id = $2`,
-      [totalFinal, commandeId]
-    );
+    if (updateError) throw updateError;
 
-    await client.query(
-      `UPDATE commandes SET statut = 'payee', date_cloture = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [commandeId]
-    );
+    // Libérer la table
+    const { error: tableError } = await supabase
+      .from('tables')
+      .update({ status: 'LIBRE' })
+      .eq('id', parseInt(table_id));
 
-    const tableUpdate = await client.query(
-      `UPDATE tables SET status = 'LIBRE' WHERE id = $1 RETURNING *`,
-      [table_id]
-    );
+    if (tableError) throw tableError;
 
-    await client.query('COMMIT');
-
-    const facture = await pool.query(
-      `SELECT numero_facture FROM commandes WHERE id = $1`,
-      [commandeId]
-    );
-
+    // WebSocket
     const io = req.app.get('io');
     if (io) {
       io.emit('tableStatusChanged', {
-        tableId: table_id,
+        tableId: parseInt(table_id),
         status: 'LIBRE',
-        table: tableUpdate.rows[0] || null,
       });
-      console.log(`📡 WebSocket émis : table ${table_id} libérée`);
     }
 
     res.status(200).json({
       commandeId,
-      numeroFacture: facture.rows[0].numero_facture,
-      total: totalFinal,
-      message: isNewOrder ? 'Nouvelle commande créée et payée' : 'Articles ajoutés et commande payée'
+      numeroFacture,
+      total,
     });
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ submitOrder:', error);
-
-    if (error.message && error.message.includes('Stock insuffisant')) {
-      const match = error.message.match(/"([^"]+)" \(ID (\d+)\)\. Disponible: (\d+), demandé: (\d+)/);
-      if (match) {
-        const nom = match[1];
-        const id = parseInt(match[2]);
-        const disponible = parseInt(match[3]);
-        const demande = parseInt(match[4]);
-        return res.status(400).json({
-          error: 'STOCK_INSUFFISANT',
-          details: {
-            itemId: id,
-            itemName: nom,
-            disponible: disponible,
-            demande: demande,
-          },
-          message: error.message
-        });
-      }
-    }
-
-    const status = error.message && error.message.includes('introuvable') ? 400 : 500;
-    res.status(status).json({ error: error.message });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('❌ submitOrder error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ============================================
-// PUT /api/commandes/:id/payer
-// ============================================
-exports.markOrderAsPaid = async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const result = await pool.query(
-      `UPDATE commandes
-       SET statut = 'payee', date_cloture = CURRENT_TIMESTAMP
-       WHERE id = $1 AND statut != 'payee'
-       RETURNING id`,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Commande non trouvée ou déjà payée' });
-    }
-
-    const order = await pool.query('SELECT table_id FROM commandes WHERE id = $1', [id]);
-    if (order.rows.length > 0) {
-      const tableId = order.rows[0].table_id;
-      const tableUpdate = await pool.query(
-        `UPDATE tables SET status = 'LIBRE' WHERE id = $1 RETURNING *`,
-        [tableId]
-      );
-      const io = req.app.get('io');
-      if (io) {
-        io.emit('tableStatusChanged', {
-          tableId: tableId,
-          status: 'LIBRE',
-          table: tableUpdate.rows[0] || null,
-        });
-      }
-    }
-
-    res.status(200).json({ message: 'Commande marquée comme payée', id: result.rows[0].id });
-  } catch (error) {
-    console.error('❌ markOrderAsPaid:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// ============================================
-// GET /api/commandes/:id (avec lignes)
-// ============================================
 exports.getOrderWithItems = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const orderResult = await pool.query(
-      `SELECT id, numero_facture, table_id, date_ouverture, date_cloture, statut, total
-       FROM commandes
-       WHERE id = $1`,
-      [id]
-    );
+    const { data: commande, error: orderError } = await supabase
+      .from('commandes')
+      .select('*')
+      .eq('id', parseInt(id))
+      .single();
 
-    if (orderResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Commande non trouvée' });
+    if (orderError) {
+      if (orderError.code === 'PGRST116') {
+        return res.status(404).json({ message: 'Commande non trouvée' });
+      }
+      throw orderError;
     }
 
-    const commande = orderResult.rows[0];
+    const { data: items, error: itemsError } = await supabase
+      .from('lignes_commande')
+      .select(`
+        id,
+        commande_id,
+        plat_id as menu_item_id,
+        quantite,
+        prix_unitaire,
+        total as total_ligne,
+        menu:plat_id (nom as nom_plat)
+      `)
+      .eq('commande_id', parseInt(id));
 
-    const itemsResult = await pool.query(
-      `SELECT lc.id, lc.commande_id, lc.plat_id AS menu_item_id, lc.quantite, lc.prix_unitaire, lc.total AS total_ligne,
-              m.nom AS nom_plat, m.prix AS prix_actuel
-       FROM lignes_commande lc
-       JOIN menu m ON lc.plat_id = m.id
-       WHERE lc.commande_id = $1`,
-      [id]
-    );
+    if (itemsError) throw itemsError;
 
-    commande.items = itemsResult.rows;
-
-    res.status(200).json(commande);
-  } catch (error) {
-    console.error('❌ getOrderWithItems:', error);
-    res.status(500).json({ error: error.message });
+    commande.items = items || [];
+    res.json(commande);
+  } catch (err) {
+    console.error('❌ getOrderWithItems error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ============================================
-// POST /api/commandes/sauvegarder
-// ============================================
 exports.saveCart = async (req, res) => {
   const { table_id, items } = req.body;
-  const client = await pool.connect();
+
+  if (!table_id || !items || items.length === 0) {
+    return res.status(400).json({ error: 'Données invalides' });
+  }
 
   try {
-    await client.query('BEGIN');
+    const { data: existingOrder, error: searchError } = await supabase
+      .from('commandes')
+      .select('id, total')
+      .eq('table_id', parseInt(table_id))
+      .neq('statut', 'payee')
+      .order('date_ouverture', { ascending: false })
+      .limit(1);
 
-    const existingOrder = await client.query(
-      `SELECT id, total FROM commandes
-       WHERE table_id = $1 AND statut != 'payee'
-       ORDER BY date_ouverture DESC
-       LIMIT 1`,
-      [table_id]
-    );
+    if (searchError) throw searchError;
 
     let commandeId;
     let isNewOrder = false;
 
-    if (existingOrder.rows.length > 0) {
-      commandeId = existingOrder.rows[0].id;
-      console.log(`📝 Mise à jour de la commande existante #${commandeId}`);
+    if (existingOrder && existingOrder.length > 0) {
+      commandeId = existingOrder[0].id;
     } else {
       const numeroFacture = `FACT-${Date.now()}`;
-      const newOrder = await client.query(
-        `INSERT INTO commandes (table_id, numero_facture, date_ouverture, statut, total)
-         VALUES ($1, $2, CURRENT_TIMESTAMP, 'en_cours', 0)
-         RETURNING id`,
-        [table_id, numeroFacture]
-      );
-      commandeId = newOrder.rows[0].id;
-      isNewOrder = true;
-      console.log(`🆕 Nouvelle commande créée #${commandeId}`);
+      const { data: newOrder, error: createError } = await supabase
+        .from('commandes')
+        .insert({
+          table_id: parseInt(table_id),
+          numero_facture: numeroFacture,
+          date_ouverture: new Date().toISOString(),
+          statut: 'en_cours',
+        })
+        .select()
+        .single();
 
-      const tableUpdate = await client.query(
-        `UPDATE tables SET status = 'OCCUPE' WHERE id = $1 RETURNING *`,
-        [table_id]
-      );
+      if (createError) throw createError;
+      commandeId = newOrder.id;
+      isNewOrder = true;
+    }
+
+    // Supprimer les anciennes lignes
+    const { error: deleteError } = await supabase
+      .from('lignes_commande')
+      .delete()
+      .eq('commande_id', commandeId);
+
+    if (deleteError) throw deleteError;
+
+    // Insérer les nouvelles lignes
+    let total = 0;
+    for (const item of items) {
+      const ligneTotal = item.quantite * item.prix_unitaire;
+      
+      const { error: insertError } = await supabase
+        .from('lignes_commande')
+        .insert({
+          commande_id: commandeId,
+          plat_id: item.menu_item_id,
+          quantite: item.quantite,
+          prix_unitaire: item.prix_unitaire,
+          total: ligneTotal,
+        });
+
+      if (insertError) throw insertError;
+      total += ligneTotal;
+    }
+
+    const { error: updateError } = await supabase
+      .from('commandes')
+      .update({ total: total })
+      .eq('id', commandeId);
+
+    if (updateError) throw updateError;
+
+    // Marquer la table comme occupée si nouvelle commande
+    if (isNewOrder) {
+      const { error: tableError } = await supabase
+        .from('tables')
+        .update({ status: 'OCCUPE' })
+        .eq('id', parseInt(table_id));
+
+      if (tableError) throw tableError;
 
       const io = req.app.get('io');
       if (io) {
         io.emit('tableStatusChanged', {
-          tableId: table_id,
+          tableId: parseInt(table_id),
           status: 'OCCUPE',
-          table: tableUpdate.rows[0] || null,
         });
       }
     }
 
-    await client.query(
-      `DELETE FROM lignes_commande WHERE commande_id = $1`,
-      [commandeId]
-    );
-
-    let total = 0;
-    for (const item of items) {
-      const ligneTotal = item.quantite * item.prix_unitaire;
-      await client.query(
-        `INSERT INTO lignes_commande (commande_id, plat_id, quantite, prix_unitaire, total)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [commandeId, item.menu_item_id, item.quantite, item.prix_unitaire, ligneTotal]
-      );
-      total += ligneTotal;
-    }
-
-    await client.query(
-      `UPDATE commandes SET total = $1 WHERE id = $2`,
-      [total, commandeId]
-    );
-
-    await client.query('COMMIT');
-
     res.status(200).json({
       commandeId,
       message: isNewOrder ? 'Commande créée' : 'Commande mise à jour',
-      total: total
+      total,
     });
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ saveCart:', error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('❌ saveCart error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ============================================
-// DELETE /api/commandes/table/:tableId
-// ============================================
 exports.deleteCurrentOrderForTable = async (req, res) => {
   const { tableId } = req.params;
-  const client = await pool.connect();
 
   try {
-    await client.query('BEGIN');
+    const { data: existingOrder, error: searchError } = await supabase
+      .from('commandes')
+      .select('id')
+      .eq('table_id', parseInt(tableId))
+      .neq('statut', 'payee')
+      .order('date_ouverture', { ascending: false })
+      .limit(1);
 
-    const orderResult = await client.query(
-      `SELECT id FROM commandes
-       WHERE table_id = $1 AND statut != 'payee'
-       ORDER BY date_ouverture DESC
-       LIMIT 1`,
-      [tableId]
-    );
+    if (searchError) throw searchError;
 
-    if (orderResult.rows.length === 0) {
+    if (!existingOrder || existingOrder.length === 0) {
       return res.status(404).json({ message: 'Aucune commande en cours' });
     }
 
-    const commandeId = orderResult.rows[0].id;
+    const commandeId = existingOrder[0].id;
 
-    await client.query(`DELETE FROM lignes_commande WHERE commande_id = $1`, [commandeId]);
-    await client.query(`DELETE FROM commandes WHERE id = $1`, [commandeId]);
+    const { error: deleteLinesError } = await supabase
+      .from('lignes_commande')
+      .delete()
+      .eq('commande_id', commandeId);
 
-    const tableUpdate = await client.query(
-      `UPDATE tables SET status = 'LIBRE' WHERE id = $1 RETURNING *`,
-      [tableId]
-    );
+    if (deleteLinesError) throw deleteLinesError;
 
-    await client.query('COMMIT');
+    const { error: deleteOrderError } = await supabase
+      .from('commandes')
+      .delete()
+      .eq('id', commandeId);
+
+    if (deleteOrderError) throw deleteOrderError;
+
+    const { error: tableError } = await supabase
+      .from('tables')
+      .update({ status: 'LIBRE' })
+      .eq('id', parseInt(tableId));
+
+    if (tableError) throw tableError;
 
     const io = req.app.get('io');
     if (io) {
       io.emit('tableStatusChanged', {
         tableId: parseInt(tableId),
         status: 'LIBRE',
-        table: tableUpdate.rows[0] || null,
       });
     }
 
     res.status(200).json({ message: 'Commande supprimée et table libérée' });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ deleteCurrentOrderForTable:', error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('❌ deleteCurrentOrderForTable error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ============================================
-// GET /api/commandes/dashboard/stats
-// ============================================
 exports.getDashboardStats = async (req, res) => {
   try {
-    // 1. CA total
-    const caResult = await pool.query(
-      `SELECT COALESCE(SUM(total), 0) AS total_ventes 
-       FROM commandes 
-       WHERE statut = 'payee'`
-    );
-    const totalVentes = parseFloat(caResult.rows[0].total_ventes);
+    // 1. Total des ventes
+    const { data: totalVentes, error: caError } = await supabase
+      .from('commandes')
+      .select('total')
+      .eq('statut', 'payee');
 
-    // 2. Nombre de commandes payées
-    const nbCmdResult = await pool.query(
-      `SELECT COUNT(*) AS nb_commandes 
-       FROM commandes 
-       WHERE statut = 'payee'`
-    );
-    const nombreCommandes = parseInt(nbCmdResult.rows[0].nb_commandes);
+    if (caError) throw caError;
+
+    const totalVentesSum = totalVentes?.reduce((sum, c) => sum + (c.total || 0), 0) || 0;
+
+    // 2. Nombre de commandes
+    const { count: nombreCommandes, error: nbError } = await supabase
+      .from('commandes')
+      .select('*', { count: 'exact', head: true })
+      .eq('statut', 'payee');
+
+    if (nbError) throw nbError;
 
     // 3. Commandes en cours
-    const encoursResult = await pool.query(
-      `SELECT COUNT(*) AS encours 
-       FROM commandes 
-       WHERE statut = 'en_cours'`
-    );
-    const commandesEncours = parseInt(encoursResult.rows[0].encours);
+    const { count: commandesEncours, error: encoursError } = await supabase
+      .from('commandes')
+      .select('*', { count: 'exact', head: true })
+      .eq('statut', 'en_cours');
+
+    if (encoursError) throw encoursError;
 
     // 4. Tables occupées / libres
-    const tablesResult = await pool.query(
-      `SELECT status, COUNT(*) AS count 
-       FROM tables 
-       GROUP BY status`
-    );
-    let tablesOccupees = 0, tablesDisponibles = 0;
-    tablesResult.rows.forEach(row => {
-      if (row.status === 'OCCUPE') tablesOccupees = parseInt(row.count);
-      else if (row.status === 'LIBRE') tablesDisponibles = parseInt(row.count);
+    const { data: tablesStats, error: tablesError } = await supabase
+      .from('tables')
+      .select('status');
+
+    if (tablesError) throw tablesError;
+
+    let tablesOccupees = 0;
+    let tablesDisponibles = 0;
+    tablesStats?.forEach(t => {
+      if (t.status === 'OCCUPE') tablesOccupees++;
+      else if (t.status === 'LIBRE') tablesDisponibles++;
     });
 
-    // 5. Temps moyen de service (en minutes)
-    const tempsResult = await pool.query(
-      `SELECT AVG(EXTRACT(EPOCH FROM (date_cloture - date_ouverture)) / 60) AS temps_moyen
-       FROM commandes 
-       WHERE statut = 'payee' 
-       AND date_cloture IS NOT NULL`
-    );
-    const tempsMoyen = tempsResult.rows[0].temps_moyen 
-      ? Math.round(parseFloat(tempsResult.rows[0].temps_moyen)) 
-      : 0;
+    // 5. Dernières commandes
+    const { data: dernieresCommandes, error: recentError } = await supabase
+      .from('commandes')
+      .select('id, numero_facture, table_id, total, date_ouverture, date_cloture')
+      .eq('statut', 'payee')
+      .order('date_ouverture', { ascending: false })
+      .limit(5);
 
-    // 6. Heure de pointe (plage horaire)
-    const heurePointeResult = await pool.query(`
-      WITH tranches AS (
-        SELECT 
-          EXTRACT(HOUR FROM date_ouverture) AS heure,
-          COUNT(*) AS nb_commandes
-        FROM commandes
-        WHERE statut = 'payee'
-        GROUP BY heure
-      )
-      SELECT 
-        CONCAT(floor(heure), 'h-', floor(heure)+1, 'h') AS plage,
-        nb_commandes
-      FROM tranches
-      ORDER BY nb_commandes DESC
-      LIMIT 1
-    `);
+    if (recentError) throw recentError;
+
+    // 6. Plat le plus vendu
+    const { data: topSelling, error: topError } = await supabase
+      .from('lignes_commande')
+      .select(`
+        plat_id,
+        quantite,
+        menu:plat_id (nom)
+      `);
+
+    if (topError) throw topError;
+
+    let topSellingData = { nom: 'Aucun', quantite: 0 };
+    if (topSelling && topSelling.length > 0) {
+      const aggregate = {};
+      topSelling.forEach(item => {
+        const nom = item.menu?.nom || 'Inconnu';
+        aggregate[nom] = (aggregate[nom] || 0) + item.quantite;
+      });
+      const max = Object.entries(aggregate).reduce((a, b) => a[1] > b[1] ? a : b);
+      topSellingData = { nom: max[0], quantite: max[1] };
+    }
+
+    // 7. Heure de pointe
     let peakHour = '--:--';
-    if (heurePointeResult.rows.length > 0) {
-      peakHour = heurePointeResult.rows[0].plage;
+    if (dernieresCommandes && dernieresCommandes.length > 0) {
+      const hours = dernieresCommandes.map(c => new Date(c.date_ouverture).getHours());
+      const hourCount = {};
+      hours.forEach(h => hourCount[h] = (hourCount[h] || 0) + 1);
+      const maxHour = Object.entries(hourCount).reduce((a, b) => a[1] > b[1] ? a : b);
+      peakHour = `${maxHour[0]}h-${parseInt(maxHour[0]) + 1}h`;
     }
 
-    // 7. Plat le plus vendu
-    const plusVenduResult = await pool.query(`
-      SELECT 
-        m.nom,
-        SUM(lc.quantite) AS total_quantite
-      FROM lignes_commande lc
-      JOIN menu m ON lc.plat_id = m.id
-      GROUP BY m.nom
-      ORDER BY total_quantite DESC
-      LIMIT 1
-    `);
-    let topSelling = { nom: 'Aucun', quantite: 0 };
-    if (plusVenduResult.rows.length > 0) {
-      topSelling = {
-        nom: plusVenduResult.rows[0].nom,
-        quantite: parseInt(plusVenduResult.rows[0].total_quantite)
-      };
-    }
-
-    // 8. Menus en rupture de stock
-    const stockEpuiseResult = await pool.query(`
-      SELECT id, nom, quantite
-      FROM menu
-      WHERE quantite <= 0
-      ORDER BY nom
-    `);
-    const outOfStock = stockEpuiseResult.rows.map(r => ({
-      id: r.id,
-      nom: r.nom
-    }));
-
-    // 9. 5 dernières commandes
-    const recentes = await pool.query(
-      `SELECT id, numero_facture, table_id, total, date_ouverture, date_cloture
-       FROM commandes
-       WHERE statut = 'payee'
-       ORDER BY date_ouverture DESC
-       LIMIT 5`
-    );
-
-    res.status(200).json({
-      totalVentes,
-      nombreCommandes,
-      commandesEncours,
+    res.json({
+      totalVentes: totalVentesSum,
+      nombreCommandes: nombreCommandes || 0,
+      commandesEncours: commandesEncours || 0,
       tablesOccupees,
       tablesDisponibles,
-      tempsMoyen,
+      tempsMoyen: 0,
       peakHour,
-      topSelling,
-      outOfStock,
-      dernieresCommandes: recentes.rows
+      topSelling: topSellingData,
+      outOfStock: [],
+      dernieresCommandes: dernieresCommandes || [],
     });
-  } catch (error) {
-    console.error('❌ getDashboardStats:', error);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error('❌ getDashboardStats error:', err);
+    res.status(500).json({ error: err.message });
   }
 };
