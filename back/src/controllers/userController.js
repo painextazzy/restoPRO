@@ -6,10 +6,9 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-// ✅ Récupérer l'utilisateur connecté (via le middleware)
 exports.getCurrentUser = async (req, res) => {
   try {
-    const userId = req.user?.id; // Vient du middleware d'authentification
+    const userId = req.user.id; // ✅ Récupéré du middleware
     if (!userId) {
       return res.status(401).json({ error: 'Utilisateur non authentifié' });
     }
@@ -33,10 +32,9 @@ exports.getCurrentUser = async (req, res) => {
   }
 };
 
-// ✅ Mettre à jour l'utilisateur connecté
 exports.updateCurrentUser = async (req, res) => {
   const { nom, email, image_url } = req.body;
-  const userId = req.user?.id;
+  const userId = req.user.id; // ✅
 
   if (!userId) {
     return res.status(401).json({ error: 'Utilisateur non authentifié' });
