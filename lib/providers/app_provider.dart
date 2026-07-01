@@ -26,7 +26,7 @@ class AppProvider extends ChangeNotifier {
 
   User? _user;
   Commande? _currentOrder;
-  String? _token; // 🔑 Token JWT
+  String? _token;
 
   final Map<int, List<OrderItem>> _cartsByTable = {};
 
@@ -105,14 +105,12 @@ class AppProvider extends ChangeNotifier {
   // PERSISTANCE DE LA SESSION
   // ==========================================
 
-  /// Sauvegarde le token et l'utilisateur dans SharedPreferences
   Future<void> _saveAuthData(User user, String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('token', token);
     await prefs.setString('user', jsonEncode(user.toJson()));
   }
 
-  /// Charge les données de session depuis SharedPreferences
   Future<void> _loadAuthData() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
@@ -132,7 +130,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  /// Supprime les données de session
   Future<void> _clearAuthData() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
@@ -145,12 +142,12 @@ class AppProvider extends ChangeNotifier {
   Future<void> loadInitialData() async {
     await loadTables();
     await loadMenu();
-    await _loadAuthData(); // ✅ Restaure la session si elle existe
+    await _loadAuthData();
     _loadMockHistory();
   }
 
   // ==========================================
-  // DASHBOARD - Charger les statistiques
+  // DASHBOARD
   // ==========================================
   Future<void> loadDashboardStats() async {
     try {
@@ -164,7 +161,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ==========================================
-  // WEBSOCKET - INITIALISATION
+  // WEBSOCKET
   // ==========================================
   void initWebSocket() {
     final apiUrl = dotenv.env['API_URL'];
@@ -218,7 +215,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ==========================================
-  // MISE À JOUR LOCALE DU STATUT DE TABLE
+  // MISE À JOUR LOCALE DU STATUT
   // ==========================================
   void _updateTableStatusLocally(int tableId, String newStatus) {
     final index = _tables.indexWhere((t) => t.id == tableId);
@@ -231,7 +228,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ==========================================
-  // SAUVEGARDE DU PANIER
+  // SAUVEGARDE PANIER
   // ==========================================
   Future<void> _saveCartToDatabase() async {
     if (_selectedTableId == null) return;
@@ -272,6 +269,18 @@ class AppProvider extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  // ✅ Chargement silencieux (sans spinner) pour les mises à jour en arrière‑plan
+  Future<void> loadTablesSilently() async {
+    try {
+      final tables = await ApiService.getTables();
+      _tables = tables;
+      _notifyTableChanged();
+      print('🪑 Tables rechargées en silence');
+    } catch (e) {
+      print('❌ loadTablesSilently : $e');
     }
   }
 
@@ -419,14 +428,15 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ==========================================
-  // COMMANDES
+  // COMMANDES - CHARGEMENT SILENCIEUX (sans spinner)
   // ==========================================
   Future<void> loadCurrentOrderForTable(int tableId) async {
-    _isLoading = true;
+    // On ne touche PAS à _isLoading pour éviter le spinner
     _errorMessage = '';
-    notifyListeners();
+    // Pas de notifyListeners() ici
 
     try {
+      // Sauvegarde du panier actuel si une table était sélectionnée
       if (_selectedTableId != null && _cart.isNotEmpty) {
         await ApiService.saveCart(_selectedTableId!, _cart);
         print('💾 Panier sauvegardé pour table $_selectedTableId');
@@ -463,18 +473,22 @@ class AppProvider extends ChangeNotifier {
         print('🆕 Aucune commande en cours pour la table $tableId.');
       }
 
-      await loadTables();
+      // ✅ Mise à jour des tables en arrière‑plan (sans spinner)
+      await loadTablesSilently();
     } catch (e) {
       _errorMessage = 'Erreur chargement commande : $e';
       _currentOrder = null;
       _loadCartForTable(tableId);
       print('❌ loadCurrentOrderForTable : $e');
     } finally {
-      _isLoading = false;
+      // ✅ Une seule notification à la fin
       notifyListeners();
     }
   }
 
+  // ==========================================
+  // SOUMISSION COMMANDE
+  // ==========================================
   Future<Map<String, dynamic>> submitOrder() async {
     if (_cart.isEmpty) {
       throw Exception('Le panier est vide');
@@ -596,7 +610,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ==========================================
-  // 👤 UTILISATEUR (Public, sans token)
+  // 👤 UTILISATEUR
   // ==========================================
 
   Future<void> loadUser() async {
@@ -618,11 +632,10 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // ✅ Ajout du paramètre imageUrl
   Future<User?> updateCurrentUser({
     required String nom,
     required String email,
-    String? imageUrl, // ✅ URL Cloudinary
+    String? imageUrl,
   }) async {
     _isLoading = true;
     _errorMessage = '';
@@ -635,7 +648,6 @@ class AppProvider extends ChangeNotifier {
       }
       final updatedUser = await ApiService.updateCurrentUser(data);
       _user = updatedUser;
-      // Mettre à jour la session persistante
       if (_token != null) {
         await _saveAuthData(_user!, _token!);
       }
@@ -651,8 +663,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // ⚠️ Cette méthode est conservée pour compatibilité, mais vous pouvez la supprimer
-  // si vous utilisez désormais updateCurrentUser avec imageUrl.
   Future<User?> updateCurrentUserWithImage({
     required String nom,
     required String email,

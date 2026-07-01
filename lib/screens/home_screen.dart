@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final appProvider = Provider.of<AppProvider>(context, listen: false);
       appProvider.initWebSocket();
+      // On écoute les changements mais on n'affiche plus de snackbar
       appProvider.addListener(_onTableStatusChanged);
     });
   }
@@ -48,30 +49,22 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  // ✅ Snackbar supprimée – on se contente d'un log
   void _onTableStatusChanged() {
     final appProvider = Provider.of<AppProvider>(context, listen: false);
     final lastChange = appProvider.lastTableStatusChange;
     if (lastChange != null) {
       final tableName = lastChange['tableName'] ?? 'Table';
       final status = lastChange['status'];
-      final message = status == 'OCCUPEE'
-          ? '$tableName est maintenant occupée'
-          : '$tableName est maintenant libre';
-
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: status == 'OCCUPEE' ? Colors.orange : Colors.green,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      print(
+          '📢 Table $tableName est maintenant ${status == 'OCCUPEE' ? 'occupée' : 'libre'}');
+      // On consomme l'événement pour éviter les répétitions
       appProvider.consumeLastTableStatusChange();
     }
   }
 
   // ==========================================
-  // AVATAR (Cloudinary)
+  // AVATAR
   // ==========================================
   Widget _buildProfileAvatar(User? user) {
     final imageUrl = user?.imageUrl;
@@ -127,7 +120,6 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Titre
               Text(
                 'Leresto',
                 style: GoogleFonts.inter(
@@ -139,7 +131,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               Row(
                 children: [
-                  // Notifications
                   Stack(
                     children: [
                       Container(
@@ -166,7 +157,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   const SizedBox(width: 4),
-                  // Avatar (Cloudinary)
                   Container(
                     width: 40,
                     height: 40,

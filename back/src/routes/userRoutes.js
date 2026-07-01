@@ -3,7 +3,7 @@ const router = express.Router();
 const userController = require('../controllers/userController');
 
 // Routes publiques (sans token)
-router.get('/me', userController.getCurrentUser);
-router.put('/me', userController.updateCurrentUser); // plus de middleware upload
+router.get('/users/me', authMiddleware, userController.getCurrentUser);
+router.put('/users/me', authMiddleware, userController.updateCurrentUser);
 
 module.exports = router;

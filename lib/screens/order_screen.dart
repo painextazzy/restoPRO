@@ -6,8 +6,6 @@ import '../models/order.dart';
 import '../models/table.dart';
 import 'invoice_screen.dart';
 import '../models/invoice_data.dart';
-import '../services/api_service.dart'; // ✅ Ajout
-import '../utils/type_converter.dart'; // ✅ Ajout
 
 class OrderScreen extends StatefulWidget {
   const OrderScreen({super.key});
@@ -24,23 +22,17 @@ class _OrderScreenState extends State<OrderScreen> {
     final total = appProvider.total;
     final tables = appProvider.tables;
 
-    // ==========================================
     // 1️⃣ AUCUNE TABLE SÉLECTIONNÉE
-    // ==========================================
     if (appProvider.selectedTableId == null) {
       return _buildNoTableSelected(tables, appProvider);
     }
 
-    // ==========================================
     // 2️⃣ PANIER VIDE
-    // ==========================================
     if (cart.isEmpty) {
       return _buildEmptyCart(appProvider, tables);
     }
 
-    // ==========================================
     // 3️⃣ PANIER AVEC CONTENU
-    // ==========================================
     return _buildCartWithItems(appProvider, tables, cart, total);
   }
 
@@ -618,7 +610,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   // ------------------------------------------------------------
-  // CARTE D'UN ARTICLE AVEC INDICATEUR DE STOCK
+  // CARTE D'UN ARTICLE
   // ------------------------------------------------------------
   Widget _buildCartItemCard(OrderItem orderItem, AppProvider provider) {
     final item = orderItem.menuItem;
@@ -706,7 +698,6 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                   ],
                 ),
-                // ⚠️ Rupture de stock
                 if (isStockEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
@@ -720,7 +711,6 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                   ),
                 const SizedBox(height: 4),
-                // Prix
                 Text(
                   '${item.prix.toStringAsFixed(0)} Ar',
                   style: GoogleFonts.inter(
@@ -779,7 +769,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   // ------------------------------------------------------------
-  // RÉSUMÉ + BOUTON DE VALIDATION AVEC FACTURE (CORRIGÉ)
+  // RÉSUMÉ + BOUTON DE VALIDATION (CORRIGÉ)
   // ------------------------------------------------------------
   Widget _buildSummaryAndCheckout(
     BuildContext context,
@@ -867,42 +857,34 @@ class _OrderScreenState extends State<OrderScreen> {
                   return;
                 }
 
+                // ✅ Sauvegarde des articles avant validation
+                final cartItems = List<OrderItem>.from(provider.cart);
+                final totalAmount = provider.total;
+
                 try {
-                  // 1️⃣ Paiement
                   final result = await provider.submitOrder();
                   final commandeId = result['commandeId'];
+                  final numeroFacture = result['numeroFacture'];
 
-                  // 2️⃣ Récupération de la commande avec ses lignes
-                  final commande =
-                      await ApiService.getOrderWithItems(commandeId);
-
-                  // 3️⃣ Construction des articles de la facture
-                  final items = commande.items.map((item) {
+                  // Construction des articles pour la facture
+                  final items = cartItems.map((orderItem) {
                     return InvoiceItem(
-                      nom: item.nomPlat ?? 'Article inconnu',
-                      quantite: item.quantite,
-                      prixUnitaire: item.prixUnitaire,
-                      totalLigne: item.totalLigne,
+                      nom: orderItem.menuItem.nom,
+                      quantite: orderItem.quantite,
+                      prixUnitaire: orderItem.menuItem.prix,
+                      totalLigne: orderItem.sousTotal,
                     );
                   }).toList();
 
-                  // 4️⃣ Conversion sécurisée du total
-                  final totalFacture = TypeConverter.toDouble(commande.total);
-
-                  // 5️⃣ Création des données de facture
                   final invoiceData = InvoiceData(
-                    numeroFacture: commande.numeroFacture,
-                    date: commande.dateOuverture
-                        .toIso8601String()
-                        .split('T')
-                        .first,
+                    numeroFacture: numeroFacture,
+                    date: DateTime.now().toIso8601String().split('T').first,
                     adresse: '123 Rue de la Gastronomie, Paris',
                     items: items,
-                    total: totalFacture,
-                    barcode: 'INV-${commande.id}',
+                    total: totalAmount,
+                    barcode: 'INV-$commandeId',
                   );
 
-                  // 6️⃣ Navigation vers InvoiceScreen
                   if (mounted) {
                     Navigator.push(
                       context,

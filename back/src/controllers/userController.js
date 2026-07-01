@@ -1,4 +1,3 @@
-// back/src/controllers/userController.js
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
@@ -7,12 +6,18 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// ✅ Récupérer l'utilisateur connecté (via le middleware)
 exports.getCurrentUser = async (req, res) => {
   try {
+    const userId = req.user?.id; // Vient du middleware d'authentification
+    if (!userId) {
+      return res.status(401).json({ error: 'Utilisateur non authentifié' });
+    }
+
     const { data, error } = await supabase
       .from('users')
       .select('id, nom, email, image_url')
-      .eq('id', 1)
+      .eq('id', userId)
       .single();
 
     if (error) {
@@ -28,8 +33,14 @@ exports.getCurrentUser = async (req, res) => {
   }
 };
 
+// ✅ Mettre à jour l'utilisateur connecté
 exports.updateCurrentUser = async (req, res) => {
   const { nom, email, image_url } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Utilisateur non authentifié' });
+  }
 
   try {
     const updateData = { nom, email };
@@ -40,7 +51,7 @@ exports.updateCurrentUser = async (req, res) => {
     const { data, error } = await supabase
       .from('users')
       .update(updateData)
-      .eq('id', 1)
+      .eq('id', userId)
       .select('id, nom, email, image_url')
       .single();
 
