@@ -388,14 +388,22 @@ class ApiService {
     }
   }
 
-  static Future<User> updateCurrentUser(Map<String, dynamic> data) async {
+  static Future<User> updateCurrentUser({
+    required Map<String, dynamic> data,
+    required String token,
+  }) async {
     final response = await http.put(
       Uri.parse('$baseUrl/users/me'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
       body: jsonEncode(data),
     );
     if (response.statusCode == 200) {
       return User.fromJson(jsonDecode(response.body));
+    } else if (response.statusCode == 401) {
+      throw Exception('Session expirée, veuillez vous reconnecter');
     } else {
       throw Exception('Erreur mise à jour utilisateur');
     }

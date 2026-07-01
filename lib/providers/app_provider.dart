@@ -632,37 +632,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  Future<User?> updateCurrentUser({
-    required String nom,
-    required String email,
-    String? imageUrl,
-  }) async {
-    _isLoading = true;
-    _errorMessage = '';
-    notifyListeners();
-
-    try {
-      final data = {'nom': nom, 'email': email};
-      if (imageUrl != null && imageUrl.isNotEmpty) {
-        data['image_url'] = imageUrl;
-      }
-      final updatedUser = await ApiService.updateCurrentUser(data);
-      _user = updatedUser;
-      if (_token != null) {
-        await _saveAuthData(_user!, _token!);
-      }
-      print('✅ Profil mis à jour : ${updatedUser.nom}');
-      return updatedUser;
-    } catch (e) {
-      _errorMessage = 'Erreur mise à jour profil : $e';
-      print('❌ updateCurrentUser : $e');
-      return null;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
   Future<User?> updateCurrentUserWithImage({
     required String nom,
     required String email,

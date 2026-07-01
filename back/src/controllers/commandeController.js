@@ -1,4 +1,3 @@
-// back/src/controllers/commandeController.js
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
@@ -107,11 +106,12 @@ exports.submitOrder = async (req, res) => {
 
       if (ligneError) throw ligneError;
 
-      // Mettre à jour le stock
+      // ✅ Mise à jour du stock via RPC (fonction PostgreSQL)
       const { error: stockError } = await supabase
-        .from('menu')
-        .update({ quantite: supabase.raw('quantite - ?', [item.quantite]) })
-        .eq('id', item.menu_item_id);
+        .rpc('decrement_stock', {
+          item_id: item.menu_item_id,
+          qty: item.quantite
+        });
 
       if (stockError) throw stockError;
       total += ligneTotal;
