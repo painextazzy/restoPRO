@@ -72,7 +72,7 @@ const commandeRoutes = require('./src/routes/commandeRoutes');
 
 app.use('/api/menu', menuRoutes);
 app.use('/api/tables', tableRoutes);
-app.use('/api/users', userRoutes);
+app.use('/users', userRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/commandes', commandeRoutes);
 
