@@ -70,11 +70,11 @@ const userRoutes = require('./src/routes/userRoutes');
 const authRoutes = require('./src/routes/authRoutes');
 const commandeRoutes = require('./src/routes/commandeRoutes');
 
-app.use('/api/menu', menuRoutes);
-app.use('/api/tables', tableRoutes);
+app.use('/menu', menuRoutes);
+app.use('/tables', tableRoutes);
 app.use('/users', userRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/commandes', commandeRoutes);
+app.use('/auth', authRoutes);
+app.use('/commandes', commandeRoutes);
 
 // Exposer supabase aux contrôleurs (via app.set)
 app.set('supabase', supabase);
